@@ -27,35 +27,6 @@ pub enum VoyageError {
     RequestError(#[from] reqwest::Error),
 }
 
-// #[cfg(target_arch = "wasm32")]
-// #[derive(Debug, Error)]
-// pub enum VoyageError {
-//     #[error("Failed to create headers: {0}")]
-//     HeaderCreationError(String),
-//     #[error("Failed to append header: {0}")]
-//     HeaderAppendError(String),
-//     #[error("Failed to create request: {0}")]
-//     RequestCreationError(String),
-//     #[error("Failed to fetch: {0}")]
-//     FetchError(String),
-//     #[error("Failed to parse response: {0}")]
-//     ResponseParseError(String),
-//     #[error("Invalid request: {message}")]
-//     InvalidRequest { message: String },
-//     #[error("Unauthorized: Invalid API key")]
-//     Unauthorized,
-//     #[error("Rate limit exceeded")]
-//     RateLimitExceeded,
-//     #[error("Server error: {0}")]
-//     ServerError(String),
-//     #[error("Service unavailable")]
-//     ServiceUnavailable,
-//     #[error("JSON deserialization error: {0}")]
-//     DeserializationError(#[from] serde_wasm_bindgen::Error),
-//     #[error("JSON serialization error: {0}")]
-//     SerializationError(#[from] serde_json::Error),
-// }
-
 #[derive(Error, Debug)]
 pub enum VoyageBuilderError {
     #[error("API key not set")]
@@ -326,72 +297,6 @@ impl EmbeddingsRequest {
             _ => Err(VoyageError::ServiceUnavailable),
         }
     }
-
-    // #[cfg(target_arch = "wasm32")]
-    // pub async fn send(&self) -> Result<EmbeddingsResponse, VoyageError> {
-    //     #[cfg(feature = "leaky-bucket")]
-    //     if let Some(limiter) = self.voyage.leaky_bucket.as_ref() {
-    //         limiter.acquire_one().await
-    //     }
-    //     let url = format!("{}/embeddings", BASE_URL);
-    //
-    //     let mut opts = RequestInit::new();
-    //     opts.method("POST");
-    //     opts.mode(web_sys::RequestMode::Cors);
-    //
-    //     let headers = web_sys::Headers::new()
-    //         .map_err(|e| VoyageError::HeaderCreationError(e.as_string().unwrap_or_default()))?;
-    //     headers
-    //         .append("Authorization", &format!("Bearer {}", self.voyage.api_key))
-    //         .map_err(|e| VoyageError::HeaderAppendError(e.as_string().unwrap_or_default()))?;
-    //     headers
-    //         .append("Content-Type", "application/json")
-    //         .map_err(|e| VoyageError::HeaderAppendError(e.as_string().unwrap_or_default()))?;
-    //     opts.headers(&headers);
-    //
-    //     let body = serde_json::to_string(self)?;
-    //     opts.body(Some(&JsValue::from(body)));
-    //
-    //     let request = Request::new_with_str_and_init(&url, &opts)
-    //         .map_err(|e| VoyageError::RequestCreationError(e.as_string().unwrap_or_default()))?;
-    //
-    //     let window = web_sys::window().unwrap();
-    //     let resp_value = JsFuture::from(window.fetch_with_request(&request))
-    //         .await
-    //         .map_err(|e| VoyageError::FetchError(e.as_string().unwrap_or_default()))?;
-    //     let resp: Response = resp_value.dyn_into().unwrap();
-    //
-    //     match resp.status() {
-    //         200 => {
-    //             let json = JsFuture::from(resp.json().unwrap()).await.map_err(|e| {
-    //                 VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
-    //             })?;
-    //             let result: EmbeddingsResponse = serde_wasm_bindgen::from_value(json)?;
-    //             Ok(result)
-    //         }
-    //         400 => Err(VoyageError::InvalidRequest {
-    //             message: JsFuture::from(resp.text().unwrap())
-    //                 .await
-    //                 .map_err(|e| {
-    //                     VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
-    //                 })?
-    //                 .as_string()
-    //                 .unwrap(),
-    //         }),
-    //         401 => Err(VoyageError::Unauthorized),
-    //         429 => Err(VoyageError::RateLimitExceeded),
-    //         500 => Err(VoyageError::ServerError(
-    //             JsFuture::from(resp.text().unwrap())
-    //                 .await
-    //                 .map_err(|e| {
-    //                     VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
-    //                 })?
-    //                 .as_string()
-    //                 .unwrap(),
-    //         )),
-    //         _ => Err(VoyageError::ServiceUnavailable),
-    //     }
-    // }
 }
 
 #[derive(Debug, Deserialize)]
