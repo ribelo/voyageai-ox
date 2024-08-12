@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
+#[cfg(feature = "leaky-bucket")]
 use leaky_bucket::RateLimiter;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use strum::{Display, EnumString};
 use thiserror::Error;
 
 const BASE_URL: &str = "https://api.voyageai.com/v1";
@@ -20,13 +19,42 @@ pub enum VoyageError {
     ServerError(String),
     #[error("Service unavailable")]
     ServiceUnavailable,
-    #[error("HTTP request error: {0}")]
-    RequestError(#[from] reqwest::Error),
     #[error("JSON serialization/deserialization error: {0}")]
     JsonError(#[from] serde_json::Error),
     #[error("Tokenizer error: {0}")]
     TokenizerError(String),
+    #[error("HTTP request error: {0}")]
+    RequestError(#[from] reqwest::Error),
 }
+
+// #[cfg(target_arch = "wasm32")]
+// #[derive(Debug, Error)]
+// pub enum VoyageError {
+//     #[error("Failed to create headers: {0}")]
+//     HeaderCreationError(String),
+//     #[error("Failed to append header: {0}")]
+//     HeaderAppendError(String),
+//     #[error("Failed to create request: {0}")]
+//     RequestCreationError(String),
+//     #[error("Failed to fetch: {0}")]
+//     FetchError(String),
+//     #[error("Failed to parse response: {0}")]
+//     ResponseParseError(String),
+//     #[error("Invalid request: {message}")]
+//     InvalidRequest { message: String },
+//     #[error("Unauthorized: Invalid API key")]
+//     Unauthorized,
+//     #[error("Rate limit exceeded")]
+//     RateLimitExceeded,
+//     #[error("Server error: {0}")]
+//     ServerError(String),
+//     #[error("Service unavailable")]
+//     ServiceUnavailable,
+//     #[error("JSON deserialization error: {0}")]
+//     DeserializationError(#[from] serde_wasm_bindgen::Error),
+//     #[error("JSON serialization error: {0}")]
+//     SerializationError(#[from] serde_json::Error),
+// }
 
 #[derive(Error, Debug)]
 pub enum VoyageBuilderError {
@@ -37,7 +65,7 @@ pub enum VoyageBuilderError {
 #[derive(Debug, Default)]
 pub struct VoyageBuilder {
     api_key: Option<String>,
-    client: Option<Client>,
+    client: Option<reqwest::Client>,
     #[cfg(feature = "leaky-bucket")]
     leaky_bucket: Option<RateLimiter>,
 }
@@ -52,7 +80,7 @@ impl VoyageBuilder {
         self
     }
 
-    pub fn client(mut self, client: Client) -> Self {
+    pub fn client(mut self, client: reqwest::Client) -> Self {
         self.client = Some(client);
         self
     }
@@ -65,6 +93,7 @@ impl VoyageBuilder {
 
     pub fn build(self) -> Result<Voyage, VoyageBuilderError> {
         let api_key = self.api_key.ok_or(VoyageBuilderError::ApiKeyNotSet)?;
+
         let client = self.client.unwrap_or_default();
 
         #[cfg(feature = "leaky-bucket")]
@@ -82,7 +111,7 @@ impl VoyageBuilder {
 #[derive(Debug, Clone)]
 pub struct Voyage {
     api_key: String,
-    client: Client,
+    client: reqwest::Client,
     #[cfg(feature = "leaky-bucket")]
     leaky_bucket: Option<Arc<RateLimiter>>,
 }
@@ -269,6 +298,7 @@ impl EmbeddingsRequest {
     }
 
     pub async fn send(&self) -> Result<EmbeddingsResponse, VoyageError> {
+        #[cfg(feature = "leaky-bucket")]
         if let Some(limiter) = self.voyage.leaky_bucket.as_ref() {
             limiter.acquire_one().await
         }
@@ -296,6 +326,72 @@ impl EmbeddingsRequest {
             _ => Err(VoyageError::ServiceUnavailable),
         }
     }
+
+    // #[cfg(target_arch = "wasm32")]
+    // pub async fn send(&self) -> Result<EmbeddingsResponse, VoyageError> {
+    //     #[cfg(feature = "leaky-bucket")]
+    //     if let Some(limiter) = self.voyage.leaky_bucket.as_ref() {
+    //         limiter.acquire_one().await
+    //     }
+    //     let url = format!("{}/embeddings", BASE_URL);
+    //
+    //     let mut opts = RequestInit::new();
+    //     opts.method("POST");
+    //     opts.mode(web_sys::RequestMode::Cors);
+    //
+    //     let headers = web_sys::Headers::new()
+    //         .map_err(|e| VoyageError::HeaderCreationError(e.as_string().unwrap_or_default()))?;
+    //     headers
+    //         .append("Authorization", &format!("Bearer {}", self.voyage.api_key))
+    //         .map_err(|e| VoyageError::HeaderAppendError(e.as_string().unwrap_or_default()))?;
+    //     headers
+    //         .append("Content-Type", "application/json")
+    //         .map_err(|e| VoyageError::HeaderAppendError(e.as_string().unwrap_or_default()))?;
+    //     opts.headers(&headers);
+    //
+    //     let body = serde_json::to_string(self)?;
+    //     opts.body(Some(&JsValue::from(body)));
+    //
+    //     let request = Request::new_with_str_and_init(&url, &opts)
+    //         .map_err(|e| VoyageError::RequestCreationError(e.as_string().unwrap_or_default()))?;
+    //
+    //     let window = web_sys::window().unwrap();
+    //     let resp_value = JsFuture::from(window.fetch_with_request(&request))
+    //         .await
+    //         .map_err(|e| VoyageError::FetchError(e.as_string().unwrap_or_default()))?;
+    //     let resp: Response = resp_value.dyn_into().unwrap();
+    //
+    //     match resp.status() {
+    //         200 => {
+    //             let json = JsFuture::from(resp.json().unwrap()).await.map_err(|e| {
+    //                 VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
+    //             })?;
+    //             let result: EmbeddingsResponse = serde_wasm_bindgen::from_value(json)?;
+    //             Ok(result)
+    //         }
+    //         400 => Err(VoyageError::InvalidRequest {
+    //             message: JsFuture::from(resp.text().unwrap())
+    //                 .await
+    //                 .map_err(|e| {
+    //                     VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
+    //                 })?
+    //                 .as_string()
+    //                 .unwrap(),
+    //         }),
+    //         401 => Err(VoyageError::Unauthorized),
+    //         429 => Err(VoyageError::RateLimitExceeded),
+    //         500 => Err(VoyageError::ServerError(
+    //             JsFuture::from(resp.text().unwrap())
+    //                 .await
+    //                 .map_err(|e| {
+    //                     VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
+    //                 })?
+    //                 .as_string()
+    //                 .unwrap(),
+    //         )),
+    //         _ => Err(VoyageError::ServiceUnavailable),
+    //     }
+    // }
 }
 
 #[derive(Debug, Deserialize)]
@@ -433,6 +529,7 @@ impl RerankRequest {
     }
 
     pub async fn send(self) -> Result<RerankResponse, VoyageError> {
+        #[cfg(feature = "leaky-bucket")]
         if let Some(limiter) = self.voyage.leaky_bucket.as_ref() {
             limiter.acquire_one().await
         }
@@ -445,7 +542,6 @@ impl RerankRequest {
             .json(&self)
             .send()
             .await?;
-
         match response.status() {
             reqwest::StatusCode::OK => Ok(response.json().await?),
             reqwest::StatusCode::BAD_REQUEST => Err(VoyageError::InvalidRequest {
@@ -459,6 +555,74 @@ impl RerankRequest {
             _ => Err(VoyageError::ServiceUnavailable),
         }
     }
+
+    // #[cfg(target_arch = "wasm32")]
+    // pub async fn send(self) -> Result<RerankResponse, VoyageError> {
+    //     use web_sys::{Headers, RequestMode};
+    //
+    //     #[cfg(feature = "leaky-bucket")]
+    //     if let Some(limiter) = self.voyage.leaky_bucket.as_ref() {
+    //         limiter.acquire_one().await
+    //     }
+    //     let url = format!("{}/rerank", BASE_URL);
+    //
+    //     let mut opts = RequestInit::new();
+    //     opts.method("POST");
+    //     opts.mode(RequestMode::Cors);
+    //
+    //     let headers = Headers::new()
+    //         .map_err(|e| VoyageError::HeaderCreationError(e.as_string().unwrap_or_default()))?;
+    //     headers
+    //         .append("Authorization", &format!("Bearer {}", self.voyage.api_key))
+    //         .map_err(|e| VoyageError::HeaderAppendError(e.as_string().unwrap_or_default()))?;
+    //     headers
+    //         .append("Content-Type", "application/json")
+    //         .map_err(|e| VoyageError::HeaderAppendError(e.as_string().unwrap_or_default()))?;
+    //     opts.headers(&headers);
+    //
+    //     let body = serde_json::to_string(&self)?;
+    //     opts.body(Some(&JsValue::from(body)));
+    //
+    //     let request = Request::new_with_str_and_init(&url, &opts)
+    //         .map_err(|e| VoyageError::RequestCreationError(e.as_string().unwrap_or_default()))?;
+    //
+    //     let window = web_sys::window().unwrap();
+    //     let resp_value = JsFuture::from(window.fetch_with_request(&request))
+    //         .await
+    //         .map_err(|e| VoyageError::FetchError(e.as_string().unwrap_or_default()))?;
+    //     let resp: Response = resp_value.dyn_into().unwrap();
+    //
+    //     match resp.status() {
+    //         200 => {
+    //             let json = JsFuture::from(resp.json().unwrap()).await.map_err(|e| {
+    //                 VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
+    //             })?;
+    //             let result: RerankResponse = serde_wasm_bindgen::from_value(json)?;
+    //             Ok(result)
+    //         }
+    //         400 => Err(VoyageError::InvalidRequest {
+    //             message: JsFuture::from(resp.text().unwrap())
+    //                 .await
+    //                 .map_err(|e| {
+    //                     VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
+    //                 })?
+    //                 .as_string()
+    //                 .unwrap(),
+    //         }),
+    //         401 => Err(VoyageError::Unauthorized),
+    //         429 => Err(VoyageError::RateLimitExceeded),
+    //         500 => Err(VoyageError::ServerError(
+    //             JsFuture::from(resp.text().unwrap())
+    //                 .await
+    //                 .map_err(|e| {
+    //                     VoyageError::ResponseParseError(e.as_string().unwrap_or_default())
+    //                 })?
+    //                 .as_string()
+    //                 .unwrap(),
+    //         )),
+    //         _ => Err(VoyageError::ServiceUnavailable),
+    //     }
+    // }
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,12 +658,24 @@ mod tests {
     use super::*;
     use std::env;
 
-    // Helper function to get API key from environment
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::*;
+
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn get_api_key() -> String {
         env::var("VOYAGE_API_KEY").expect("VOYAGE_API_KEY must be set")
     }
 
-    #[tokio::test]
+    #[cfg(target_arch = "wasm32")]
+    const fn get_api_key() -> &'static str {
+        env!("VOYAGE_API_KEY")
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_voyage_builder() {
         let api_key = get_api_key();
         let voyage = Voyage::builder()
@@ -510,7 +686,8 @@ mod tests {
         assert!(!voyage.api_key.is_empty());
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embeddings_request() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
@@ -533,7 +710,8 @@ mod tests {
         assert!(response.usage.total_tokens > 0);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embeddings_request_multiple_inputs() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
@@ -556,7 +734,8 @@ mod tests {
         assert!(response.usage.total_tokens > 0);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_embeddings_request_with_options() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
@@ -581,7 +760,8 @@ mod tests {
         assert!(response.usage.total_tokens > 0);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_rerank_request() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
@@ -606,7 +786,8 @@ mod tests {
         assert!(response.usage.total_tokens > 0);
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_rerank_request_with_options() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
@@ -660,7 +841,8 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_invalid_api_key() {
         let voyage = Voyage::builder().api_key("invalid_key").build().unwrap();
 
