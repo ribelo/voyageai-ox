@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    borrow::{Borrow, Cow},
+    sync::Arc,
+};
 
 #[cfg(feature = "leaky-bucket")]
 use leaky_bucket::RateLimiter;
@@ -140,32 +143,32 @@ pub enum InputType {
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum EmbeddingsInput {
-    Single(String),
-    Multiple(Vec<String>),
+pub enum EmbeddingsInput<'a> {
+    Single(Cow<'a, str>),
+    Multiple(Vec<Cow<'a, str>>),
 }
 
-impl From<String> for EmbeddingsInput {
+impl<'a> From<&'a str> for EmbeddingsInput<'a> {
+    fn from(s: &'a str) -> Self {
+        EmbeddingsInput::Single(Cow::Borrowed(s))
+    }
+}
+
+impl<'a> From<Vec<&'a str>> for EmbeddingsInput<'a> {
+    fn from(v: Vec<&'a str>) -> Self {
+        EmbeddingsInput::Multiple(v.into_iter().map(Cow::Borrowed).collect())
+    }
+}
+
+impl<'a> From<String> for EmbeddingsInput<'a> {
     fn from(s: String) -> Self {
-        EmbeddingsInput::Single(s)
+        EmbeddingsInput::Single(Cow::Owned(s))
     }
 }
 
-impl From<&str> for EmbeddingsInput {
-    fn from(s: &str) -> Self {
-        EmbeddingsInput::Single(s.to_string())
-    }
-}
-
-impl From<Vec<String>> for EmbeddingsInput {
+impl<'a> From<Vec<String>> for EmbeddingsInput<'a> {
     fn from(v: Vec<String>) -> Self {
-        EmbeddingsInput::Multiple(v)
-    }
-}
-
-impl<const N: usize> From<[String; N]> for EmbeddingsInput {
-    fn from(arr: [String; N]) -> Self {
-        EmbeddingsInput::Multiple(arr.to_vec())
+        EmbeddingsInput::Multiple(v.into_iter().map(Cow::Owned).collect())
     }
 }
 
@@ -176,8 +179,8 @@ pub enum EncodingFormat {
 }
 
 #[derive(Debug, Default)]
-pub struct EmbeddingsRequestBuilder {
-    input: Option<EmbeddingsInput>,
+pub struct EmbeddingsRequestBuilder<'a> {
+    input: Option<EmbeddingsInput<'a>>,
     model: Option<EmbeddingModel>,
     input_type: Option<InputType>,
     voyage: Option<Voyage>,
@@ -197,8 +200,8 @@ pub enum EmbeddingsBuilderError {
     InputListTooLong,
 }
 
-impl EmbeddingsRequestBuilder {
-    pub fn input(mut self, input: impl Into<EmbeddingsInput>) -> Self {
+impl<'a> EmbeddingsRequestBuilder<'a> {
+    pub fn input<T: Into<EmbeddingsInput<'a>>>(mut self, input: T) -> Self {
         self.input = Some(input.into());
         self
     }
@@ -228,7 +231,7 @@ impl EmbeddingsRequestBuilder {
         self
     }
 
-    pub fn build(self) -> Result<EmbeddingsRequest, EmbeddingsBuilderError> {
+    pub fn build(self) -> Result<EmbeddingsRequest<'a>, EmbeddingsBuilderError> {
         let input = self.input.ok_or(EmbeddingsBuilderError::MissingInput)?;
         let model = self.model.ok_or(EmbeddingsBuilderError::MissingModel)?;
         let voyage = self.voyage.ok_or(EmbeddingsBuilderError::MissingVoyage)?;
@@ -251,8 +254,8 @@ impl EmbeddingsRequestBuilder {
 }
 
 #[derive(Debug, Serialize)]
-pub struct EmbeddingsRequest {
-    pub input: EmbeddingsInput,
+pub struct EmbeddingsRequest<'a> {
+    pub input: EmbeddingsInput<'a>,
     pub model: EmbeddingModel,
     pub input_type: Option<InputType>,
     #[serde(skip)]
@@ -263,8 +266,8 @@ pub struct EmbeddingsRequest {
     pub encoding_format: Option<EncodingFormat>,
 }
 
-impl EmbeddingsRequest {
-    pub fn builder() -> EmbeddingsRequestBuilder {
+impl<'a> EmbeddingsRequest<'a> {
+    pub fn builder() -> EmbeddingsRequestBuilder<'a> {
         EmbeddingsRequestBuilder::default()
     }
 
@@ -337,9 +340,9 @@ impl RerankerModel {
 }
 
 #[derive(Debug, Default)]
-pub struct RerankRequestBuilder {
+pub struct RerankRequestBuilder<'a> {
     query: Option<String>,
-    documents: Option<Vec<String>>,
+    documents: Option<Vec<Cow<'a, str>>>,
     model: Option<RerankerModel>,
     voyage: Option<Voyage>,
     top_k: Option<u32>,
@@ -359,14 +362,18 @@ pub enum RerankBuilderError {
     MissingVoyage,
 }
 
-impl RerankRequestBuilder {
-    pub fn query(mut self, query: impl Into<String>) -> Self {
+impl<'a> RerankRequestBuilder<'a> {
+    pub fn query<T: Into<String>>(mut self, query: T) -> Self {
         self.query = Some(query.into());
         self
     }
 
-    pub fn documents(mut self, documents: Vec<String>) -> Self {
-        self.documents = Some(documents);
+    pub fn documents<I, S>(mut self, documents: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<Cow<'a, str>>,
+    {
+        self.documents = Some(documents.into_iter().map(Into::into).collect());
         self
     }
 
@@ -395,7 +402,7 @@ impl RerankRequestBuilder {
         self
     }
 
-    pub fn build(self) -> Result<RerankRequest, RerankBuilderError> {
+    pub fn build(self) -> Result<RerankRequest<'a>, RerankBuilderError> {
         let query = self.query.ok_or(RerankBuilderError::MissingQuery)?;
         let documents = self.documents.ok_or(RerankBuilderError::MissingDocuments)?;
         let model = self.model.ok_or(RerankBuilderError::MissingModel)?;
@@ -414,9 +421,9 @@ impl RerankRequestBuilder {
 }
 
 #[derive(Debug, Serialize)]
-pub struct RerankRequest {
+pub struct RerankRequest<'a> {
     query: String,
-    documents: Vec<String>,
+    documents: Vec<Cow<'a, str>>,
     model: RerankerModel,
     #[serde(skip)]
     voyage: Voyage,
@@ -428,8 +435,8 @@ pub struct RerankRequest {
     truncation: Option<bool>,
 }
 
-impl RerankRequest {
-    pub fn builder() -> RerankRequestBuilder {
+impl<'a> RerankRequest<'a> {
+    pub fn builder() -> RerankRequestBuilder<'a> {
         RerankRequestBuilder::default()
     }
 
@@ -620,10 +627,11 @@ mod tests {
     async fn test_embeddings_request_multiple_inputs() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
+        let docs = vec!["Input 1".to_string(), "Input 2".to_string()];
 
         let request = voyage
             .embeddings()
-            .input(vec!["Input 1".to_string(), "Input 2".to_string()])
+            .input(docs)
             .model(EmbeddingModel::VoyageLarge2Instruct)
             .build()
             .expect("Failed to build embeddings request");
@@ -670,15 +678,16 @@ mod tests {
     async fn test_rerank_request() {
         let api_key = get_api_key();
         let voyage = Voyage::builder().api_key(api_key).build().unwrap();
+        let docs = vec![
+            "Document 1".to_string(),
+            "Document 2".to_string(),
+            "Document 3".to_string(),
+        ];
 
         let request = voyage
             .rerank()
             .query("Test query")
-            .documents(vec![
-                "Document 1".to_string(),
-                "Document 2".to_string(),
-                "Document 3".to_string(),
-            ])
+            .documents(&docs)
             .model(RerankerModel::RerankLite1)
             .build()
             .expect("Failed to build rerank request");
@@ -728,7 +737,7 @@ mod tests {
         let multiple = EmbeddingsInput::from(vec!["test1".to_string(), "test2".to_string()]);
         assert!(matches!(multiple, EmbeddingsInput::Multiple(_)));
 
-        let array = EmbeddingsInput::from(["test1".to_string(), "test2".to_string()]);
+        let array = EmbeddingsInput::from(vec!["test1".to_string(), "test2".to_string()]);
         assert!(matches!(array, EmbeddingsInput::Multiple(_)));
     }
 
